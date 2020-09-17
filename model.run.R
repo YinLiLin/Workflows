@@ -1,99 +1,103 @@
+PT <- function(bfile = "", pheno.col = 6, val.num = 5, rep.num = 1, r2 = 0.2, rfile = "", seed = 666666){
+	
+	set.seed(seed)
+	fam <- read.table(paste0(bfile, ".fam"), head = FALSE)
+	pheno <- fam[, pheno.col] + 3
+	index <- which(!is.na(pheno))
+	if(length(index) == 0)	stop("No valid observations.")
+	val.fold <- cut(1 : length(index), val.num, labels=FALSE)
+	
+	n <- nrow(read.table(rfile, head=FALSE))
+	Acc <- matrix(NA, rep.num * val.num, n)
+	myrfile <- rfile
 
-P_plus_T <- function(bfile = "", pheno.col = 6, val.num = 5, r2 = 0.2, rfile = ""){
-  
-  fam <- read.table(paste0(bfile, ".fam"), head = FALSE)
-  pheno <- fam[, pheno.col] + 3
-  index <- which(!is.na(pheno))
-  if(length(index) == 0)  stop("No valid observations.")
-  val.fold <- cut(1 : length(index), val.num, labels=FALSE)
-  
-  n <- nrow(read.table(rfile, head=FALSE))
-  Acc <- matrix(NA, val.num, n)
-  myrfile <- rfile
+	# start cross-validation
+	for(rep in 1 : rep.num){
+		index <- sample(index, length(index))
+		val.num1 <- ifelse(rep == rep.num, val.num + 1, val.num)
+		for(i in 1 : val.num1){
 
-  # start cross-validation
-  for(i in 1 : (val.num + 1)){
+			# phenotype assigning
+			val.pheno <- pheno
+			if(i <= val.num){
+				if(length(table(pheno[index[val.fold == i]])) < 2)	next()
+				val.pheno[index[val.fold == i]] <- NA
+			}
+			if(file.exists(paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i, ".pheno")))	stop("file exists.")
+			write.table(cbind(fam[, 1 : 2], val.pheno), paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i, ".pheno"), col.names=FALSE, row.names=FALSE, sep=" ", quote=FALSE)
+			
+			# association test
+			system(
+				paste0(
+					"plink --bfile ", bfile,
+					" --pheno ", paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i, ".pheno"),
+					" --all-pheno ",
+					" --allow-no-sex",
+					" --keep-allele-order",
+					" --freq",
+					" --assoc",
+					" --out ", paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i)
+				)
+			)
 
-    # phenotype assigning
-    val.pheno <- pheno
-    if(i <= val.num){
-      val.pheno[index[val.fold == i]] <- NA
-    }
-    if(file.exists(paste0(basename(bfile), "_PT_col", pheno.col, "_val", i, ".pheno"))) stop("file exists.")
-    write.table(cbind(fam[, 1 : 2], val.pheno), paste0(basename(bfile), "_PT_col", pheno.col, "_val", i, ".pheno"), col.names=FALSE, row.names=FALSE, sep=" ", quote=FALSE)
-    
-    # association test
-    system(
-      paste0(
-        "plink --bfile ", bfile,
-        " --pheno ", paste0(basename(bfile), "_PT_col", pheno.col, "_val", i, ".pheno"),
-        " --all-pheno ",
-        " --allow-no-sex",
-        " --keep-allele-order",
-        " --freq",
-        " --assoc",
-        " --out ", paste0(basename(bfile), "_PT_col", pheno.col, "_val", i)
-      )
-    )
+			sink(paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i, ".sh"))
+			cat("#! /bin/bash", "\n")
+			cat(paste0("paste -d' ' <(awk '{print $2,$5,$6}' ", paste0(bfile, ".bim"), " | sed '1iSNP A1 A2') <(awk '{print $5}' ", paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i), ".frq) <(awk '{print $5,$6,$9,$4}' ", paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i),".P1.qassoc) > ", paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i), ".ma"), "\n")
+			sink()
+			system(paste0("bash ", basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i, ".sh"))
 
-    sink(paste0(basename(bfile), "_PT_col", pheno.col, "_val", i, ".sh"))
-    cat("#! /bin/bash", "\n")
-    cat(paste0("paste -d' ' <(awk '{print $2,$5,$6}' ", paste0(bfile, ".bim"), " | sed '1iSNP A1 A2') <(awk '{print $5}' ", paste0(basename(bfile), "_PT_col", pheno.col, "_val", i), ".frq) <(awk '{print $5,$6,$9,$4}' ", paste0(basename(bfile), "_PT_col", pheno.col, "_val", i),".P1.qassoc) > ", paste0(basename(bfile), "_PT_col", pheno.col, "_val", i), ".ma"), "\n")
-    sink()
-    system(paste0("bash ", basename(bfile), "_PT_col", pheno.col, "_val", i, ".sh"))
+			# clumping
+			system(
+				paste0(
+					"plink --bfile ", bfile,
+					" --clump ", paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i, ".ma"),
+					" --clump-field P",
+					" --clump-p1 1",
+					" --clump-p2 1",
+					" --clump-r2 ", r2,
+					" --clump-kb 1000",
+					" --allow-no-sex --out ", paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i)
+				)
+			)
 
-    # clumping
-    system(
-      paste0(
-        "plink --bfile ", bfile,
-        " --clump ", paste0(basename(bfile), "_PT_col", pheno.col, "_val", i, ".ma"),
-        " --clump-field P",
-        " --clump-p1 1",
-        " --clump-p2 1",
-        " --clump-r2 ", r2,
-        " --clump-kb 1000",
-        " --allow-no-sex --out ", paste0(basename(bfile), "_PT_col", pheno.col, "_val", i)
-      )
-    )
+			system(paste("awk 'NR!=1{print $3}' ", paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i), ".clumped > ", paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i), ".snplist", sep=""))
 
-    system(paste("awk 'NR!=1{print $3}' ", paste0(basename(bfile), "_PT_col", pheno.col, "_val", i), ".clumped > ", paste0(basename(bfile), "_PT_col", pheno.col, "_val", i), ".snplist", sep=""))
+			# predicting for thresholds
+			system(
+				paste0(
+					"plink --bfile ", bfile,
+					" --score ", paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i, ".ma 1 2 5 header sum"),
+					" --q-score-range ", myrfile,
+					" ", paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i, ".ma 1 7 header"),
+					" --extract ", paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i, ".snplist"),
+					" --allow-no-sex --out ",
+					paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i)
+				)
+			)
 
-    # predicting for thresholds
-    system(
-      paste0(
-        "plink --bfile ", bfile,
-        " --score ", paste0(basename(bfile), "_PT_col", pheno.col, "_val", i, ".ma 1 2 5 header sum"),
-        " --q-score-range ", myrfile,
-        " ", paste0(basename(bfile), "_PT_col", pheno.col, "_val", i, ".ma 1 7 header"),
-        " --extract ", paste0(basename(bfile), "_PT_col", pheno.col, "_val", i, ".snplist"),
-        " --allow-no-sex --out ",
-        paste0(basename(bfile), "_PT_col", pheno.col, "_val", i)
-      )
-    )
+			if(i <= val.num){
+				for(j in 1 : n){
+					infebv <- try(read.table(paste0(paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i),".s",j,".profile"), head=T)[, 6], silent=TRUE)
+					if(class(infebv) != "try-error"){
+						Acc[((rep - 1) * val.num + i), j] <- pROC::auc(pheno[index[val.fold == i]] - 3, infebv[index[val.fold == i]])
+					}
+				}
+			}else{
+				predict <- read.table(paste0(paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i),".s", n1, ".profile"), head=T)[, 6]
+			}
 
-    if(i <= val.num){
-      for(j in 1 : n){
-        infebv <- try(read.table(paste0(paste0(basename(bfile), "_PT_col", pheno.col, "_val", i),".s",j,".profile"), head=T)[, 6], silent=TRUE)
-        if(class(infebv) != "try-error"){
-          Acc[i, j] <- pROC::auc(pheno[index[val.fold == i]] - 3, infebv[index[val.fold == i]])
-        }
-      }
-    }else{
-      predict <- read.table(paste0(paste0(basename(bfile), "_PT_col", pheno.col, "_val", i),".s1.profile"), head=T)[, 6]
-    }
+			if(rep == rep.num & i == val.num){
+				# print(Acc)
+				n1 <- which.max(apply(Acc, 2, function(x){mean(x, na.rm=TRUE)}))
+				system(paste0("sed -n ", n1, "p ", rfile, " > ", basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i + 1, ".opt.range"))
+				myrfile <- paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i + 1, ".opt.range")
+			}
 
-    if(i == val.num){
-      n1 <- which.max(apply(Acc, 2, mean))
-      system(paste0("sed -n ", n1, "p ", rfile, " > ", basename(bfile), "_PT_col", pheno.col, "_val", i + 1, ".opt.range"))
-      myrfile <- paste0(basename(bfile), "_PT_col", pheno.col, "_val", i + 1, ".opt.range")
-    }
-
-    system(paste0("rm -f ", paste0(basename(bfile), "_PT_col", pheno.col, "_val", i, "*")))
-  }
-
-  return(predict)
+			system(paste0("rm -f ", paste0(basename(bfile), "_PT_col", pheno.col, "_rep", rep, "_val", i, "*")))
+		}
+	}
+	return(predict)
 }
-
 
 BayesR <- 
 function(
